@@ -1,15 +1,17 @@
+"""Darknet implementation module."""
+
 import torch
 import torch.nn as nn
 import numpy as np
 
 
 class Darknet(nn.Module):
-    """
-    Darknet object detection module.
-    """
+    """Darknet object detection network."""
+
     def __init__(self, config_path, input_size=None):
         """
-        Initializes Darknet module with the configuration stored in 'config_path'.
+        Initialize Darknet module with the configuration stored in 'config_path'.
+
         :param config_path: YOLOv3 configuration file path.
         :param input_size: Input image size (height, width). If None, image size in configs file will be used.
         """
@@ -22,7 +24,8 @@ class Darknet(nn.Module):
 
     def forward(self, x):
         """
-        Forward-pass of the model.
+        Forward of the model.
+
         :param x: Input tensor (batch, channel, height, width).
         :return: Detection predictions (batch, num_predictions, num_class + 5)
         """
@@ -46,7 +49,8 @@ class Darknet(nn.Module):
 
     def load_weights(self, weights_path):
         """
-        Parses and loads the weights stored in 'weights_path'.
+        Parse and load the weights stored in 'weights_path'.
+
         :param weights_path: YOLOv3 weights file path.
         """
         with open(weights_path, 'rb') as fp:
@@ -62,41 +66,41 @@ class Darknet(nn.Module):
                     bn_layer = module[1]
                     num_b = bn_layer.bias.numel()  # Number of biases
                     # Bias
-                    bn_b = torch.from_numpy(weights[ptr : ptr + num_b]).view_as(bn_layer.bias)
+                    bn_b = torch.from_numpy(weights[ptr: ptr + num_b]).view_as(bn_layer.bias)
                     bn_layer.bias.data.copy_(bn_b)
                     ptr += num_b
                     # Weight
-                    bn_w = torch.from_numpy(weights[ptr : ptr + num_b]).view_as(bn_layer.weight)
+                    bn_w = torch.from_numpy(weights[ptr: ptr + num_b]).view_as(bn_layer.weight)
                     bn_layer.weight.data.copy_(bn_w)
                     ptr += num_b
                     # Running Mean
-                    bn_rm = torch.from_numpy(weights[ptr : ptr + num_b]).view_as(bn_layer.running_mean)
+                    bn_rm = torch.from_numpy(weights[ptr: ptr + num_b]).view_as(bn_layer.running_mean)
                     bn_layer.running_mean.data.copy_(bn_rm)
                     ptr += num_b
                     # Running Var
-                    bn_rv = torch.from_numpy(weights[ptr : ptr + num_b]).view_as(bn_layer.running_var)
+                    bn_rv = torch.from_numpy(weights[ptr: ptr + num_b]).view_as(bn_layer.running_var)
                     bn_layer.running_var.data.copy_(bn_rv)
                     ptr += num_b
                 else:
                     # Load conv. bias
                     num_b = conv_layer.bias.numel()
-                    conv_b = torch.from_numpy(weights[ptr : ptr + num_b]).view_as(conv_layer.bias)
+                    conv_b = torch.from_numpy(weights[ptr: ptr + num_b]).view_as(conv_layer.bias)
                     conv_layer.bias.data.copy_(conv_b)
                     ptr += num_b
                 # Load conv. weights
                 num_w = conv_layer.weight.numel()
-                conv_w = torch.from_numpy(weights[ptr : ptr + num_w]).view_as(conv_layer.weight)
+                conv_w = torch.from_numpy(weights[ptr: ptr + num_w]).view_as(conv_layer.weight)
                 conv_layer.weight.data.copy_(conv_w)
                 ptr += num_w
 
 
 class YOLOLayer(nn.Module):
-    """
-    YOLO detection module.
-    """
+    """YOLO detection module."""
+
     def __init__(self, anchors, num_classes, input_size):
         """
-        Initializes YOLO module.
+        Initialize YOLO module.
+
         :param anchors: Anchor boxes.
         :param num_classes: Number of classes.
         :param input_size: Input image size (height, width).
@@ -114,33 +118,34 @@ class YOLOLayer(nn.Module):
         self.anchor_h = None
 
     def forward(self, x):
+        """YOLO module forward pass."""
         na = len(self.anchors)
         nb, _, gh, gw = x.size()
         stride = self.input_size[0] / gh
 
         prediction = x.view(nb, na, self.bbox_attrs, gh, gw).permute(0, 1, 3, 4, 2).contiguous()
 
-        cx = torch.sigmoid(prediction[..., 0])
-        cy = torch.sigmoid(prediction[..., 1])
-        bw = prediction[..., 2]
-        bh = prediction[..., 3]
-        conf_obj = torch.sigmoid(prediction[..., 4])
-        conf_cls = torch.sigmoid(prediction[..., 5:])
+        cx = torch.sigmoid(prediction[:, :, :, :, 0])
+        cy = torch.sigmoid(prediction[:, :, :, :, 1])
+        bw = prediction[:, :, :, :, 2]
+        bh = prediction[:, :, :, :, 3]
+        conf_obj = torch.sigmoid(prediction[:, :, :, :, 4])
+        conf_cls = torch.sigmoid(prediction[:, :, :, :, 5:])
 
         if self.grid_x is None:
             # Calculate offsets for each grid
             self.grid_x = torch.arange(gw, dtype=torch.float32).repeat(gh, 1).view([1, 1, gh, gw]).to(x.device)
             self.grid_y = torch.arange(gh, dtype=torch.float32).repeat(gw, 1).t().view([1, 1, gh, gw]).to(x.device)
-            scaled_anchors = x.new([(aw / stride, ah / stride) for aw, ah in self.anchors])
+            scaled_anchors = torch.tensor([(aw / stride, ah / stride) for aw, ah in self.anchors], dtype=torch.float)
             self.anchor_w = scaled_anchors[:, 0:1].view((1, na, 1, 1))
             self.anchor_h = scaled_anchors[:, 1:2].view((1, na, 1, 1))
 
         # Add offset and scale with anchors
-        pred_boxes = x.new(prediction[..., :4].shape).float()
-        pred_boxes[..., 0] = cx.data + self.grid_x
-        pred_boxes[..., 1] = cy.data + self.grid_y
-        pred_boxes[..., 2] = torch.exp(bw.data) * self.anchor_w
-        pred_boxes[..., 3] = torch.exp(bh.data) * self.anchor_h
+        pred_boxes = torch.empty(prediction[:, :, :, :, :4].shape, device=prediction.device)
+        pred_boxes[:, :, :, :, 0] = cx + self.grid_x
+        pred_boxes[:, :, :, :, 1] = cy + self.grid_y
+        pred_boxes[:, :, :, :, 2] = torch.exp(bw) * self.anchor_w
+        pred_boxes[:, :, :, :, 3] = torch.exp(bh) * self.anchor_h
 
         output = torch.cat((pred_boxes.view(nb, -1, 4) * stride,
                             conf_obj.view(nb, -1, 1),
@@ -150,33 +155,35 @@ class YOLOLayer(nn.Module):
 
 
 class UpsampleLayer(nn.Module):
-    """
-    Upsample module.
-    Note: nn.Upsample gives deprecated warning message.
-    """
+    """Upsample module."""
+
     def __init__(self, scale_factor, mode='nearest'):
+        """Initialize upsampling layer."""
         super(UpsampleLayer, self).__init__()
         self.scale_factor = scale_factor
         self.mode = mode
 
     def forward(self, x):
+        """Forward pass."""
         return nn.functional.interpolate(x, scale_factor=self.scale_factor, mode=self.mode)
 
 
 class EmptyLayer(nn.Module):
-    """
-    Empty module which is a placeholder for 'route' and 'shortcut' layers.
-    """
+    """Empty module which is a placeholder for 'route' and 'shortcut' layers."""
+
     def __init__(self):
+        """Init module."""
         super(EmptyLayer, self).__init__()
 
     def forward(self, x):
+        """Forward pass."""
         pass
 
 
 def create_modules(module_defs):
     """
-    Constructs module list of layer blocks from module configurations.
+    Construct module list of layer blocks from module configurations.
+
     :param module_defs: Module definitions parsed with 'parse_model_config'.
     :return: PyTorch module replacements of original Darknet layers.
     """
@@ -191,6 +198,7 @@ def create_modules(module_defs):
             filters = int(module_def['filters'])
             kernel_size = int(module_def['size'])
             pad = (kernel_size - 1) // 2 if int(module_def['pad']) else 0
+
             modules.add_module(
                 'conv_%d' % i,
                 nn.Conv2d(
@@ -243,6 +251,14 @@ def create_modules(module_defs):
             width = int(hyperparams['width'])
             height = int(hyperparams['height'])
             # Define detection layer
+            if anchor_idxs == [6, 7, 8]:
+                gh, gw = 13, 13
+            elif anchor_idxs == [3, 4, 5]:
+                gh, gw = 26, 26
+            elif anchor_idxs == [0, 1, 2]:
+                gh, gw = 52, 52
+            else:
+                raise ValueError('Cannot determine gh, gw from anchor idx')
             yolo_layer = YOLOLayer(anchors, num_classes, (height, width))
             modules.add_module('yolo_%d' % i, yolo_layer)
 
@@ -255,7 +271,8 @@ def create_modules(module_defs):
 
 def parse_model_config(path):
     """
-    Parses the configuration file.
+    Parse the configuration file.
+
     :param path: YOLOv3 configuration file path.
     :return: Module definitions as an ordered list.
     """
