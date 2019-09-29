@@ -1,3 +1,5 @@
+# Adapted from: https://pytorch.org/cppdocs/installing.html#minimal-example
+
 cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
 project(example_app)
 
